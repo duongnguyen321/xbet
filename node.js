@@ -1,11 +1,13 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const _ = require('lodash');
+const chalk = require('chalk'); // Import chalk
 const BASE_URL = 'https://www.xbet.ag/sportsbook';
 
 // Function to scrape the data
 async function scrapeData(browser, path) {
-    console.info(`Navigating to path: ${path}`);
+    console.info(chalk.blue(`Navigating to path: ${path}`));
+    console.time(`Time taken for ${path}`); // Start timing for each path
 
     const page = await browser.newPage();
 
@@ -20,12 +22,12 @@ async function scrapeData(browser, path) {
             timeout: 60000
         });
 
-        console.info("Waiting for the main sportsbook container to load...");
+        console.info(chalk.yellow("Waiting for the main sportsbook container to load..."));
 
         // Wait for the main container with game lines to appear
         await page.waitForSelector('#main-sportsbook-container .game-lines .line-default', { timeout: 60000 });
 
-        console.info("Extracting data...");
+        console.info(chalk.green("Extracting data..."));
 
         const gameData = await page.evaluate(() => {
             const games = [];
@@ -40,32 +42,81 @@ async function scrapeData(browser, path) {
                 const odds = gameLine.querySelectorAll('.game-line__home-line button, .game-line__visitor-line button');
 
                 if (teamNames.length === 2) {
-                    game.homeTeam = teamNames[0].innerText.trim();
-                    game.visitorTeam = teamNames[1].innerText.trim();
+                    game.homeTeam = {
+                        name: teamNames[0].innerText.trim(),
+                        isVisitor: false
+                    };
+                    game.visitorTeam = {
+                        name: teamNames[1].innerText.trim(),
+                        isVisitor: true
+                    };
                 }
 
                 game.odds = [];
                 odds.forEach((oddsButton) => {
+                    const gameId = oddsButton.getAttribute('data-gameid');
+                    const sportId = oddsButton.getAttribute('data-sport-id');
+                    const leagueId = oddsButton.getAttribute('data-league-id');
+                    const scoreId = oddsButton.getAttribute('data-score-id');
+                    const lineTournamentId = oddsButton.getAttribute('data-linetournamentid');
+                    const marketId = oddsButton.getAttribute('data-marketid');
+                    const outComeId = oddsButton.getAttribute('data-outcomeid');
+                    const description = oddsButton.getAttribute('data-description');
+                    const date = oddsButton.getAttribute('data-gamedate'); // date bet
+                    const dataOdds = oddsButton.getAttribute('data-odds');
+                    const dataOdd = oddsButton.getAttribute('data-odd');
+                    const type = oddsButton.getAttribute('data-wager-type');
+                    const team = oddsButton.getAttribute('data-team');
+                    const teamVs = oddsButton.getAttribute('data-team-vs');
+                    const spread = oddsButton.getAttribute('data-spread');
+                    const points = oddsButton.getAttribute('data-points');
+                    const oddsValue = oddsButton.innerText.trim();
+                    // Derive names based on IDs where possible
+                    const name = `${description} - TeamA: ${team}, TeamB: ${teamVs}`;
+                    const dateBet = new Date(date).toISOString()
+                    const datePlay = new Date(date)
+                    datePlay.setHours(new Date(dateBet).getHours() + 1)
+
+                    const father = oddsButton.parentElement
+                    // if index = 0 => Spread
+                    // if index = 1 => Moneyline
+                    // if index = 2 => Total
+                    const index = Array.from(father.children).indexOf(oddsButton);
+                    let typeBet;
+                    if (index === 0) {
+                        typeBet = 'Spread';
+                    } else if (index === 1) {
+                        typeBet = 'Moneyline';
+                    } else if (index === 2) {
+                        typeBet = 'Total';
+                    } else {
+                        typeBet = 'Unknown'; // Fallback in case of unexpected index
+                    }
                     const odd = {
-                        description: oddsButton.getAttribute('data-description'),
-                        gameId: oddsButton.getAttribute('data-gameid'),
-                        sportId: oddsButton.getAttribute('data-sport-id'),
-                        leagueId: oddsButton.getAttribute('data-league-id'),
-                        scoreId: oddsButton.getAttribute('data-score-id'),
-                        lineTournamentId: oddsButton.getAttribute('data-linetournamentid'),
-                        marketId: oddsButton.getAttribute('data-marketid'),
-                        outComeId: oddsButton.getAttribute('data-outcomeid'),
-                        date: oddsButton.getAttribute('data-gamedate'),
-                        dataOdds: oddsButton.getAttribute('data-odds'),
-                        dataOdd: oddsButton.getAttribute('data-odd'),
-                        type: oddsButton.getAttribute('data-wager-type'),
-                        team: oddsButton.getAttribute('data-team'),
-                        teamVs: oddsButton.getAttribute('data-team-vs'),
-                        oddsValue: oddsButton.innerText.trim(),
-                        spread: oddsButton.getAttribute('data-spread'),
-                        points: oddsButton.getAttribute('data-points'),
+                        typeBet,
+                        gameId,
+                        name,
+                        sportId,
+                        leagueId,
+                        scoreId,
+                        lineTournamentId,
+                        marketId,
+                        outComeId,
+                        description,
+                        dateBet: dateBet,
+                        datePlay: datePlay.toISOString(),
+                        dataOdds,
+                        dataOdd,
+                        type,
+                        team,
+                        teamVs,
+                        oddsValue,
+                        spread,
+                        points,
+                        isVisitor: oddsButton.closest('.game-line__visitor-line') ? true : false
                     };
-                    if (odd.gameId && odd.sportId) {
+
+                    if (gameId && sportId) {
                         game.odds.push(odd);
                     }
                 });
@@ -78,17 +129,19 @@ async function scrapeData(browser, path) {
 
         const groupedData = _.groupBy(gameData.flatMap(game => game.odds), 'gameId');
         fs.writeFileSync(`./database/grouped-${path.replace(/\//g, '')}.json`, JSON.stringify(groupedData, null, 2), 'utf-8');
-        console.log(`Grouped data has been saved for path ${path}`);
+        console.log(chalk.magenta(`Grouped data has been saved for path ${path}`));
     } catch (error) {
-        console.error(`Error during scraping for path ${path}:`, error);
+        console.error(chalk.red(`Error during scraping for path ${path}:`), error);
     } finally {
+        console.timeEnd(`Time taken for ${path}`); // End timing for each path
         await page.close();
     }
 }
 
 // Main function to launch the browser and iterate over paths
 (async () => {
-    console.info("Launching browser...");
+    console.info(chalk.blue("Launching browser..."));
+    console.time("Total time for all paths"); // Start timing for all paths
     const browser = await puppeteer.launch({ headless: true });
 
     const navPath = require('./utils/path.json');
@@ -96,6 +149,7 @@ async function scrapeData(browser, path) {
         await scrapeData(browser, path);
     }
 
-    console.info("Closing the browser...");
+    console.timeEnd("Total time for all paths"); // End timing for all paths
+    console.info(chalk.blue("Closing the browser..."));
     await browser.close();
 })();

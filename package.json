@@ -1,6 +1,10 @@
 {
   "dependencies": {
+    "chalk": "^4.1.2",
     "lodash": "^4.17.21",
     "puppeteer": "^23.8.0"
+  },
+  "scripts": {
+    "start": "bun run node.js"
   }
 }
